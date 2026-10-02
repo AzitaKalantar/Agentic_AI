@@ -1,0 +1,23 @@
+# Local credentials
+.env
+.env.*
+!.env.example
+
+# Python environments and generated files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# SQLite databases and journal/WAL sidecars
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Local agent data
+/Simple_entertaining_agent/db/*
+!/Simple_entertaining_agent/db/.gitkeep
