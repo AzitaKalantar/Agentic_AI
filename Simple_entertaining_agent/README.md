@@ -60,7 +60,8 @@ empty_history(session_id="alice", task="puzzles")
 
 From the project root, import from `Simple_entertaining_agent.handle_database`.
 Pass the base ID (`alice`), without the task suffix. Valid tasks are `jokes`,
-`puzzles`, and `facts`. Display returns a pandas DataFrame with all messages;
+`puzzles`, and `facts`. The helpers return results without printing or displaying them.
+`display_db_contents` returns a pandas DataFrame with all messages;
 empty returns the number of messages removed and deletes only that session's
 metadata and messages. Both accept an optional `db_path` and require an existing
 SDK database. `empty_history` replaces the former `empty_jokes_history` helper.
@@ -70,7 +71,7 @@ the database and SDK tables. Database files, SQLite sidecars, `.env`, Python
 caches, virtual environments, and notebook checkpoints are ignored by the root
 `.gitignore`. The tracked `db/.gitkeep` keeps the empty folder in fresh checkouts.
 
-To print both complete tables or return history as a JSON string:
+To retrieve both complete tables or return history as a JSON string:
 
 ```python
 from handle_database import print_db_tables, export_history_json
