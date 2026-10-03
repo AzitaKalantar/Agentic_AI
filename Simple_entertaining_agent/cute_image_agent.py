@@ -104,7 +104,7 @@ def create_cute_image_agent() -> Agent[ImageSearchContext]:
 
 
 async def CuteImage(
-    user_id: str = "user-1", subject: str = "cute baby animal"
+    user_id: str = "user-1", subject: str = "cute image"
 ) -> ImageResult | None:
     """Return image details without displaying them; remember the user's selection."""
     if not isinstance(user_id, str) or not user_id.strip():

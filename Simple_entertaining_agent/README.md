@@ -1,5 +1,30 @@
 # Entertainment agents
 
+## Cute image search
+
+The cute-image agent searches Wikimedia Commons, selects a matching image, and
+returns an `ImageResult` object. The caller decides when and how to display it.
+It uses the same `.env` settings as the other agents and needs no extra search API key.
+
+```python
+from Simple_entertaining_agent.cute_image_agent import CuteImage
+from IPython.display import Image, display
+
+image = await CuteImage(user_id="alice", subject="cute kitten")
+if image is not None:
+    print(image.caption)
+    print(f"Source and license: {image.source_url}")
+    display(Image(url=image.image_url, width=640))
+```
+
+Inside the notebook in this folder, use `from cute_image_agent import CuteImage`.
+Run `python Simple_entertaining_agent/cute_image_agent.py` to print result details
+as JSON for the default cute animal subject. The returned result contains `title`, `image_url`, `source_url`,
+and `caption`, or is `None` if no image is found. Internet access is required.
+The source page links to attribution and license details.
+Selections use a separate `alice:images` history; database helpers accept
+`task="images"`. Avoiding repeated images is best effort.
+
 Joke, fun fact, and puzzle agents share persistent SQLite storage. Python modules
 and the notebook live together for straightforward imports; local data lives in
 `db/`.
