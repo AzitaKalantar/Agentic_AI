@@ -19,7 +19,7 @@ def create_joke_agent() -> Agent:
             "Tell one joke. Avoid jokes you have already told in this conversation. "
             "When possible, choose a different joke style or topic."
         ),
-        model=os.getenv("OPENAI_MODEL", "gpt-6-astra"),
+        model=os.getenv("OPENAI_MODEL", "gpt-6-luna"),
     )
 
 

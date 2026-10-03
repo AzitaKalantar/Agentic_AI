@@ -19,7 +19,7 @@ def create_funfact_agent() -> Agent:
             "Tell one fun fact. Avoid facts you have already told in this conversation. "
             "When possible, choose a different fun fact topic."
         ),
-        model=os.getenv("OPENAI_MODEL", "gpt-6-astra"),
+        model=os.getenv("OPENAI_MODEL", "gpt-6-luna"),
     )
 
 

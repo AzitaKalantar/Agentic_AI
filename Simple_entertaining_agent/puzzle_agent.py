@@ -23,7 +23,7 @@ class PuzzleReply(BaseModel):
 def create_puzzle_agent() -> Agent:
     return Agent(
         name="One-word puzzle host",
-        model=os.getenv("OPENAI_MODEL", "gpt-6-astra"),
+        model=os.getenv("OPENAI_MODEL", "gpt-6-luna"),
         instructions=(
             "You are a friendly conversational puzzle host. Whenever you receive "
             "the exact message 'Start a new one-word puzzle.', start a new round, "
