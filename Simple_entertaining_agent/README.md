@@ -1,8 +1,8 @@
-﻿# Entertainment agents
+# Entertainment agents
 
 A Python project using the OpenAI Agents SDK for jokes, fun facts, conversational
 one-word puzzles, and cute images from Wikimedia Commons. The entertainment
-manager offers these activities in a notebook or terminal. Specialist agents
+manager exposes these activities through a message-based interface for a UI backend. Specialist agents
 keep separate persistent histories for each user in SQLite.
 
 ## Setup and model version
@@ -38,31 +38,54 @@ Dependencies in `requirements.txt` are `openai-agents`, `httpx`, `python-dotenv`
 
 ## Entertainment manager
 
-From the repository root:
-
-```powershell
-python Simple_entertaining_agent/entertainment_manager.py
-```
-
-In a notebook running from the repository root:
+The manager is a stateful class. Create one instance per conversation, then
+pass each incoming chat message to `send_message`:
 
 ```python
 from Simple_entertaining_agent.entertainment_manager import EntertainmentManager
 
-await EntertainmentManager(user_id="alice")
+manager = EntertainmentManager(user_id="alice")
+response = await manager.send_message("Give me a puzzle")
+print(response.message)
+
+response = await manager.send_message("Can I have a hint?")
+print(response.message)
+
+# Return this dictionary from a future HTTP API endpoint.
+payload = response.model_dump(mode="json")
 ```
 
 Inside this folder's notebook, import from `entertainment_manager` instead.
+The manager does not read terminal input, print replies, display images, or
+run an interactive loop when its module is executed.
+
+Each response contains:
+
+- `message`: text to show in the chat.
+- `action`: `chat`, `puzzle`, `image`, `joke`, `fact`, or `quit`.
+- `mode`: `menu`, `puzzle`, or `closed`.
+- `image`: image details (`title`, `image_url`, `source_url`, `caption`) or null.
+- `puzzle_status`: `playing`, `solved`, `revealed`, or null.
+
 Use natural language such as "tell me a joke", "show me a kitten", or
-"surprise me". Surprise choices are selected randomly by Python.
+"surprise me". Surprise choices are selected randomly by Python. During a
+puzzle, subsequent messages go to the puzzle host. Solving the puzzle or asking
+for its answer returns the mode to `menu`. Send `menu` or `back` to leave a
+puzzle, or `quit`, `exit`, `bye`, or `stop` to close the conversation.
+Empty messages return guidance without making an API call.
 
-Type `quit`, `exit`, `bye`, or `stop` to end the conversation, including during
-a puzzle. During a puzzle, `menu` or `back` returns to the options. Solving a
-puzzle, revealing its answer, or finishing another activity returns to the menu.
+Keep the same manager instance across requests; recreating it loses menu
+context and the active puzzle mode. Use distinct user IDs for conversations
+that must have separate specialist histories. Calls on the same instance are
+serialized. Conversations sharing a user ID also share SQLite histories, so
+avoid running them concurrently. Menu context and mode live in memory;
+specialist histories persist in SQLite. Restarting the backend or creating a
+new instance starts in menu mode. After quitting, create a new instance to
+start another conversation.
 
-The manager displays images inline in notebooks and prints image URLs in a
-terminal. It does not launch a browser. Specialist histories persist in SQLite;
-the manager's menu conversation stays in memory for the current invocation.
+The UI is responsible for rendering replies, images, source links, and menu
+controls. API and network errors propagate to the caller for error handling.
+This refactor does not add an HTTP server or frontend.
 
 ## Individual agents
 
