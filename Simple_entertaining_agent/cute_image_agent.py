@@ -104,7 +104,7 @@ def create_cute_image_agent() -> Agent[ImageSearchContext]:
 
 
 async def CuteImage(
-    user_id: str = "user-1", subject: str = "cute image"
+    user_id: str = "user-1", subject: str = "cute image", *, session: SQLiteSession | None = None
 ) -> ImageResult | None:
     """Return image details without displaying them; remember the user's selection."""
     if not isinstance(user_id, str) or not user_id.strip():
@@ -115,7 +115,9 @@ async def CuteImage(
     if not os.getenv("OPENAI_API_KEY"):
         raise RuntimeError("Set OPENAI_API_KEY in Simple_entertaining_agent/.env.")
     context = ImageSearchContext()
-    session = SQLiteSession(task_session_id(user_id, "images"), DB_PATH)
+    owns_session = session is None
+    if session is None:
+        session = SQLiteSession(task_session_id(user_id, "images"), DB_PATH)
     try:
         result = await Runner.run(
             create_cute_image_agent(),
@@ -130,7 +132,8 @@ async def CuteImage(
             raise RuntimeError("The agent selected an image absent from this search.")
         return ImageResult(**selected, caption=choice.caption)
     finally:
-        session.close()
+        if owns_session:
+            session.close()
 
 
 if __name__ == "__main__":

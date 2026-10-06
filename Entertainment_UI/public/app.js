@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 const h = React.createElement;
+const SESSION_KEY = 'little-break-session';
 const activities = [
   ['puzzle', '◇', 'A little challenge', 'One word. A few clues. Your move.', 'Give me a puzzle'],
   ['joke', '☺', 'Something funny', 'A fresh joke to lighten the day.', 'Tell me a joke'],
@@ -13,7 +14,11 @@ async function api(path, data) {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data),
   });
   const result = await response.json();
-  if (!response.ok) throw new Error(result.error || 'Something went wrong. Try again.');
+  if (!response.ok) {
+    const error = new Error(result.error || 'Something went wrong. Try again.');
+    error.status = response.status;
+    throw error;
+  }
   return result;
 }
 
@@ -22,11 +27,54 @@ function App() {
   const [mode, setMode] = useState('menu');
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(true);
   const [error, setError] = useState('');
-  const lock = useRef(false);
+  const lock = useRef(true);
   const bottom = useRef(null);
   const inputRef = useRef(null);
+  useEffect(() => {
+    let cancelled = false;
+    async function restore() {
+      try {
+        const id = sessionStorage.getItem(SESSION_KEY);
+        if (id) {
+          const saved = await api('resume', {session_id: id});
+          if (!cancelled) { setSession(id); setMode(saved.mode); setMessages(saved.messages); }
+        }
+      } catch (err) {
+        if (err.status === 404) sessionStorage.removeItem(SESSION_KEY);
+        else if (!cancelled) setError(err.message);
+      } finally {
+        if (!cancelled) { lock.current = false; setBusy(false); }
+      }
+    }
+    restore();
+    return () => { cancelled = true; };
+  }, []);
+  useEffect(() => {
+    if (!session) return;
+    let stream;
+    function connect() {
+      stream?.close();
+      stream = new EventSource('/api/live?session_id=' + encodeURIComponent(session));
+      stream.onmessage = event => {
+        if (!lock.current) {
+          const snapshot = JSON.parse(event.data);
+          setMessages(previous => JSON.stringify(previous) === JSON.stringify(snapshot.messages) ? previous : snapshot.messages);
+          setMode(snapshot.mode);
+        }
+      };
+    }
+    const disconnect = () => stream?.close();
+    connect();
+    window.addEventListener('pagehide', disconnect);
+    window.addEventListener('pageshow', connect);
+    return () => {
+      disconnect();
+      window.removeEventListener('pagehide', disconnect);
+      window.removeEventListener('pageshow', connect);
+    };
+  }, [session]);
   useEffect(() => { bottom.current?.scrollIntoView({behavior: 'smooth', block: 'nearest'}); }, [messages, busy]);
 
   async function send(text) {
@@ -37,18 +85,31 @@ function App() {
     setMessages(previous => [...previous, {role: 'user', message: text}]);
     try {
       let id = session;
-      if (!id) { id = (await api('session', {})).session_id; setSession(id); }
+      if (!id) {
+        id = (await api('session', {})).session_id;
+        sessionStorage.setItem(SESSION_KEY, id);
+        setSession(id);
+      }
       const reply = await api('message', {session_id: id, message: text});
       setMode(reply.mode);
       setMessages(previous => [...previous, {...reply, role: 'assistant'}]);
-    } catch (err) { setError(err.message); setInput(text); }
+    } catch (err) {
+      if (err.status === 404) {
+        sessionStorage.removeItem(SESSION_KEY); setSession(null); setMode('menu'); setMessages([]);
+      }
+      setError(err.message); setInput(text);
+    }
     finally { lock.current = false; setBusy(false); setTimeout(() => inputRef.current?.focus(), 0); }
   }
   async function restart() {
     if (lock.current) return;
     lock.current = true; setBusy(true); setError('');
     try {
-      if (session) await api('end', {session_id: session});
+      if (session) {
+        try { await api('end', {session_id: session}); }
+        catch (err) { if (err.status !== 404) throw err; }
+      }
+      sessionStorage.removeItem(SESSION_KEY);
       setSession(null); setMode('menu'); setMessages([]); setInput('');
     } catch (err) { setError(err.message); }
     finally { lock.current = false; setBusy(false); }

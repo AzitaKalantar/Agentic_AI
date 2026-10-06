@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import threading
 import unittest
+import asyncio
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -86,3 +87,37 @@ class HTTPTests(unittest.TestCase):
             with urlopen(self.base + path) as response:
                 self.assertEqual(response.status, 200)
                 self.assertTrue(response.read())
+
+
+class LifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.bridge = module.Bridge(FakeManager, grace=0.03)
+        _, self.session = await self.bridge.request('/api/session', {})
+        self.token = self.session['session_id']
+
+    async def asyncTearDown(self):
+        await self.bridge.close()
+
+    async def test_refresh_reconnect_preserves_transcript_and_puzzle(self):
+        await self.bridge.connection(self.token, 1)
+        await self.bridge.request('/api/message', {**self.session, 'message': 'puzzle'})
+        await self.bridge.connection(self.token, -1)
+        await self.bridge.connection(self.token, 1)
+        await asyncio.sleep(0.06)
+        status, saved = await self.bridge.request('/api/resume', self.session)
+        self.assertEqual(status, 200)
+        self.assertEqual(saved['mode'], 'puzzle')
+        self.assertEqual([m['role'] for m in saved['messages']], ['user', 'assistant'])
+
+    async def test_browser_disconnect_discards_history_after_grace(self):
+        await self.bridge.connection(self.token, 1)
+        await self.bridge.connection(self.token, -1)
+        await asyncio.sleep(0.06)
+        self.assertEqual((await self.bridge.request('/api/resume', self.session))[0], 404)
+        self.assertNotIn(self.token, self.bridge.messages)
+
+    async def test_shutdown_discards_all_conversations(self):
+        await self.bridge.close()
+        self.assertEqual(self.bridge.sessions, {})
+        self.assertEqual(self.bridge.messages, {})
+        self.assertEqual(self.bridge.expiry, {})

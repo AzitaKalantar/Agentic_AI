@@ -21,9 +21,19 @@ Choose an activity or type freely. During puzzles, guess, request hints, reveal
 the answer, or go back to the menu. Images include source and license links.
 Type `quit` to end, and use **New conversation** to start again.
 
-Each conversation gets a unique ID and a persistent manager instance. New
-conversations have separate specialist histories. Restarting the server loses
-active conversation state; existing SQLite histories remain in the agent folder.
+Refreshing the page restores your chat, puzzle mode, and specialist context.
+The tab stores only its conversation ID in sessionStorage; chat and specialist
+histories live in server memory, including in-memory SQLite sessions. UI turns
+are no longer written to the agent's history database.
+
+Closing the tab/browser disconnects its live connection. The server clears
+that conversation after a 30-second grace period, allowing refreshes to
+reconnect. Network disconnections lasting longer than this also clear history.
+Browsers that restore a closed tab within that grace period can resume it.
+New conversation clears the previous conversation immediately. Stopping the
+server discards all UI history, even if it is forcibly terminated. Refresh
+after a restart to begin fresh. Individual Python/notebook agents retain their
+normal persistent storage; pre-existing database histories are unaffected.
 This is a local playground bound to loopback, limited to 100 active sessions.
 It is not a public deployment server. Frontend files live in `public/`.
 

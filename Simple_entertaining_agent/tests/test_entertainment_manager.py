@@ -189,6 +189,20 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(conversation[2]['content'], 'what can you do?')
         module.SQLiteSession.assert_not_called()
 
+    async def test_temporary_history_reuses_memory_sessions_until_close(self):
+        manager = module.EntertainmentManager('temporary-user', temporary=True)
+        module.Runner.run.side_effect = [
+            routing_result('puzzle'), puzzle_result('playing'), puzzle_result('solved'),
+        ]
+        await manager.send_message('puzzle')
+        await manager.send_message('clock')
+        module.SQLiteSession.assert_called_once_with('temporary-user:puzzles', ':memory:')
+        module.SQLiteSession.return_value.close.assert_not_called()
+        await manager.close()
+        module.SQLiteSession.return_value.close.assert_called_once()
+        self.assertEqual(manager._history, [])
+        self.assertEqual(manager._sessions, {})
+
 
 if __name__ == '__main__':
     unittest.main()

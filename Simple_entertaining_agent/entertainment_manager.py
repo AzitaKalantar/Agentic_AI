@@ -77,10 +77,12 @@ class EntertainmentManager:
     must not share specialist history. API/network errors propagate to the caller.
     """
 
-    def __init__(self, user_id: str = "user-1") -> None:
+    def __init__(self, user_id: str = "user-1", *, temporary: bool = False) -> None:
         if not isinstance(user_id, str) or not user_id.strip():
             raise ValueError("user_id must be a nonempty string.")
         self.user_id = user_id.strip()
+        self._temporary = temporary
+        self._sessions = {}
         load_dotenv(Path(__file__).with_name(".env"), override=True)
         if not os.getenv("OPENAI_API_KEY"):
             raise RuntimeError("Set OPENAI_API_KEY in Simple_entertaining_agent/.env.")
@@ -98,12 +100,26 @@ class EntertainmentManager:
         self, agent: Agent, message: str, task: Task
     ) -> str | PuzzleReply:
         """Run an activity using its saved history and always close the session."""
-        session = SQLiteSession(task_session_id(self.user_id, task), DB_PATH)
+        session = self._sessions.get(task) if self._temporary else None
+        if session is None:
+            session = SQLiteSession(task_session_id(self.user_id, task), ':memory:' if self._temporary else DB_PATH)
+            if self._temporary:
+                self._sessions[task] = session
         try:
             result = await Runner.run(agent, message, session=session)
             return result.final_output
         finally:
-            session.close()
+            if not self._temporary:
+                session.close()
+
+    async def close(self) -> None:
+        """Discard temporary specialist and conversation histories."""
+        async with self._lock:
+            for session in self._sessions.values():
+                session.close()
+            self._sessions.clear()
+            self._history.clear()
+            self._mode = 'closed'
 
     def _save_exchange(
         self, message: str, response: EntertainmentResponse
@@ -153,7 +169,12 @@ class EntertainmentManager:
 
         if action == "image":
             subject = routing_reply.image_subject or "cute baby animal"
-            image = await CuteImage(user_id=self.user_id, subject=subject)
+            if self._temporary:
+                if 'images' not in self._sessions:
+                    self._sessions['images'] = SQLiteSession(task_session_id(self.user_id, 'images'), ':memory:')
+                image = await CuteImage(user_id=self.user_id, subject=subject, session=self._sessions['images'])
+            else:
+                image = await CuteImage(user_id=self.user_id, subject=subject)
             if image is None:
                 reply_text = "No suitable image found. Try another subject or option."
             else:
