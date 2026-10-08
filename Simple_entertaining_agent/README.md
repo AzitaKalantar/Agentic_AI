@@ -201,3 +201,46 @@ Restart the notebook kernel and rerun imports after updating Python modules.
 If a notebook cell uses the old `display_db_contents`, `print_db_tables`, or
 `export_history_json` names, replace them with `get_db_contents`,
 `get_db_tables`, or `get_history_json`, respectively.
+
+## Tracing and routing evaluation
+
+Every manager turn appends one JSON record to `db/runs.jsonl`, including local
+commands, empty input, and errors. `run_id` identifies the turn; records contain
+UTC start time, routing decision/source, selected action, total latency in
+milliseconds, tool names/call IDs/status, exception types, and input/output/total
+model tokens. A surprise decision remains `surprise` while `selected_action`
+records the random activity. Puzzle follow-ups have source `active_puzzle`.
+Latency starts after acquiring the conversation lock, so it excludes queue time.
+
+SDK hooks accumulate usage after each model response, including responses before
+a later failure. Tokens for requests that fail before returning usage are unknown
+and are not counted; `model_responses` shows how many responses were measured.
+Tool status `completed` means the tool returned, including an SDK error response;
+check `errors` for failures. A tool left `started` was interrupted before returning.
+No prompts, tool arguments/results, user IDs, or exception messages are saved in
+these local traces. The SDK's own remote tracing is separate. Local files are
+ignored by Git. Pass `trace_path=None` to disable local recording, or a custom path
+to `EntertainmentManager`. File write failures are logged without breaking replies.
+
+Run the offline regression checks from the repository root:
+
+```powershell
+python -m unittest discover -s Simple_entertaining_agent/tests -v
+python -m unittest discover -s Entertainment_UI/tests -v
+```
+
+Measure actual model routing (requires the configured API key and network access):
+
+```powershell
+python -m Simple_entertaining_agent.evaluate_routing
+```
+
+The 16 labeled prompts cover standard choices, spelling mistakes, ambiguous
+requests, and requests for multiple activities. Ambiguous and multiple requests
+expect `chat`, so the host asks for clarification. Each prompt uses empty context
+and only runs the router, avoiding specialist calls and saved activity history.
+The report prints overall/per-category accuracy and saves per-prompt expected and
+actual routes, errors, latency, usage, and trace IDs in `db/routing_evaluation.json`.
+Errors count as incorrect. Edit `CASES` in `evaluate_routing.py` to grow the set.
+Reports contain the test prompts; normal run traces do not. Accuracy describes
+this small menu-routing sample, not conversational follow-ups or output quality.

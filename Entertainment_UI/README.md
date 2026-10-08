@@ -42,3 +42,17 @@ Run the HTTP bridge checks without paid model calls:
 ```powershell
 python -m unittest discover -s Entertainment_UI/tests -v
 ```
+# Behind the scenes
+
+Each assistant reply includes a collapsible **Behind the scenes** panel. The
+panel starts closed by default. Open a reply's panel
+to see the routing decision, participating agents, tools called, elapsed time,
+model response count, and input/output tokens. Surprise requests show the random
+activity chosen; puzzle follow-ups explain why routing goes directly to the host.
+Failed requests retain their recorded steps and error types. Details appear when
+the turn finishes and stay with the conversation across a refresh.
+The chat header includes a tracing banner. Replies from before tracing was added
+show a note explaining that no trace is available; send a new message to see one.
+
+The API attaches the finalized trace directly to each reply, without reading the
+shared log file. Traces are excluded from the model's conversation history.

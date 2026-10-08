@@ -17,9 +17,49 @@ async function api(path, data) {
   if (!response.ok) {
     const error = new Error(result.error || 'Something went wrong. Try again.');
     error.status = response.status;
+    error.payload = result;
     throw error;
   }
   return result;
+}
+
+const routeNames = {puzzle: 'Puzzle', joke: 'Joke', fact: 'Fun fact', image: 'Image',
+  chat: 'Conversation / clarification', quit: 'End conversation', surprise: 'Surprise me'};
+const number = value => (value ?? 0).toLocaleString();
+
+function RunDetails({trace}) {
+  if (!trace) return h('div', {className: 'trace-unavailable'},
+    'No trace was recorded for this earlier reply. Send a new message to see its steps.');
+  const duration = trace.latency_ms < 1000 ? `${Math.round(trace.latency_ms)} ms` : `${(trace.latency_ms / 1000).toFixed(2)} s`;
+  const source = {model: 'The host selected a route from your request.',
+    local: 'A menu command was handled directly, without a model call.',
+    active_puzzle: 'Your puzzle is in progress, so this turn went straight to the puzzle host.'}[trace.routing_source]
+    || 'The request ended before a routing decision was recorded.';
+  const steps = trace.agent_steps || [];
+  const tools = trace.tool_calls || [];
+  const errors = trace.errors || [];
+  return h('details', {className: 'run-details'},
+    h('summary', null, h('span', {className: 'run-title'}, 'Behind the scenes'),
+      h('span', {className: 'run-summary'}, trace.status === 'error' ? 'Incomplete' : errors.length ? 'Finished with a tool issue' : 'Complete', ' · ', duration)),
+    h('div', {className: 'run-body'},
+      h('div', {className: 'run-route'}, h('span', {className: 'run-label'}, 'ROUTING DECISION'),
+        h('strong', null, routeNames[trace.routing_decision] || 'No decision'), h('p', null, source),
+        trace.routing_decision === 'surprise' && h('p', null, 'Randomly selected: ', routeNames[trace.selected_action] || 'Pending')),
+      steps.length > 0 && h('ol', {className: 'run-steps'}, ...steps.map((step, index) =>
+        h('li', {key: index}, h('span', null, step.name), h('small', null, step.status === 'completed' ? 'Finished' : 'Interrupted')))),
+      h('div', {className: 'run-tools'}, h('span', {className: 'run-label'}, 'TOOLS'),
+        tools.length ? h('ul', null, ...tools.map((tool, index) => h('li', {key: index},
+          h('span', null, tool.name === 'search_cute_images' ? 'Search Wikimedia Commons for images' : tool.name),
+          h('small', null, tool.status === 'completed' ? 'Returned' : 'Interrupted')))) : h('p', null, 'No tools called.')),
+      h('dl', {className: 'run-metrics'}, ...[
+        ['Duration', duration], ['Model responses', number(trace.model_responses)],
+        ['Input tokens', number(trace.usage?.input_tokens)], ['Output tokens', number(trace.usage?.output_tokens)],
+      ].map(([label, value]) => h('div', {key: label}, h('dt', null, label), h('dd', null, value)))),
+      errors.length > 0 && h('div', {className: 'run-issue', role: 'note'},
+        h('strong', null, 'What went wrong'), ...errors.map((issue, index) => h('p', {key: index},
+          issue.source === 'tool' ? 'Tool issue: ' : 'Request issue: ', issue.type))),
+      h('p', {className: 'run-note'}, 'Recorded activity steps and routing outcomes. Token usage covers returned model responses; a failed request may have unreported usage.'),
+      h('small', {className: 'run-id'}, 'Run ', trace.run_id)));
 }
 
 function App() {
@@ -97,7 +137,11 @@ function App() {
       if (err.status === 404) {
         sessionStorage.removeItem(SESSION_KEY); setSession(null); setMode('menu'); setMessages([]);
       }
-      setError(err.message); setInput(text);
+      if (err.payload?.trace) {
+        setMessages(previous => [...previous, {...err.payload, role: 'assistant'}]);
+        setMode(err.payload.mode);
+      }
+      setError(err.payload?.trace ? '' : err.message); setInput(text);
     }
     finally { lock.current = false; setBusy(false); setTimeout(() => inputRef.current?.focus(), 0); }
   }
@@ -138,13 +182,18 @@ function App() {
           h('div', {className: 'chat-header'},
             h('div', {className: 'host'}, h('span', {className: 'avatar'}, '✳'), h('div', null, h('strong', null, 'Your break companion'), h('small', null, 'A little curiosity goes a long way'))),
             h('span', {className: 'status'}, mode === 'puzzle' ? 'Puzzle in play' : mode === 'closed' ? 'Ended' : 'Ready to play')),
+          h('div', {className: 'trace-banner'},
+            h('span', {className: 'trace-indicator', 'aria-hidden': true}),
+            h('div', null, h('strong', null, 'See how your break happens'),
+              h('span', null, 'Each new reply shows its route, agent steps, tools, and usage below.'))),
           h('div', {className: 'messages', role: 'log', 'aria-live': 'polite'},
             messages.length === 0 && h('div', {className: 'welcome'}, h('div', {className: 'welcome-icon'}, '✧'), h('h2', null, 'Hello, curious human.'), h('p', null, 'Pick something on the left, or tell me what would make your day a little brighter.'), h('span', null, 'Your next little adventure starts here.')),
             ...messages.map((item, index) => h('article', {key: index, className: 'message ' + item.role},
               h('span', {className: 'message-label'}, item.role === 'user' ? 'YOU' : item.action === 'chat' ? 'YOUR HOST' : (item.action || 'HOST').toUpperCase()),
               h('p', null, item.message),
               item.image && h('figure', null, h('img', {src: item.image.image_url, alt: item.image.title, loading: 'lazy', onError: event => { event.currentTarget.hidden = true; }}), h('figcaption', null, h('a', {href: item.image.source_url, target: '_blank', rel: 'noopener noreferrer'}, 'View source & license ↗'))),
-              item.puzzle_status && h('small', {className: 'puzzle-status'}, {playing: 'Your turn — guess or ask for a hint', solved: 'Nicely done! Puzzle solved.', revealed: 'Answer revealed. Ready for another?'}[item.puzzle_status]))),
+              item.puzzle_status && h('small', {className: 'puzzle-status'}, {playing: 'Your turn — guess or ask for a hint', solved: 'Nicely done! Puzzle solved.', revealed: 'Answer revealed. Ready for another?'}[item.puzzle_status]),
+              item.role === 'assistant' && h(RunDetails, {trace: item.trace}))),
             busy && h('div', {className: 'thinking', role: 'status'}, '✳  Finding a little joy for you…'),
             h('div', {ref: bottom})),
           error && h('div', {className: 'error', role: 'alert'}, error),

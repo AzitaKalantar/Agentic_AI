@@ -16,14 +16,17 @@ class FakeManager:
     def __init__(self, user_id):
         self.user_id = user_id
         self.mode = 'menu'
+        self.last_trace = None
 
     async def send_message(self, message):
         if message == 'fail':
+            self.last_trace = {'run_id': 'failed-run', 'status': 'error', 'latency_ms': 5}
             raise RuntimeError('simulated upstream failure')
         self.mode = 'puzzle' if message == 'puzzle' else self.mode
         if message == 'quit':
             self.mode = 'closed'
-        payload = {'message': message, 'mode': self.mode, 'action': 'chat', 'image': None}
+        payload = {'message': message, 'mode': self.mode, 'action': 'chat', 'image': None,
+                   'trace': {'run_id': 'success-run', 'status': 'ok', 'latency_ms': 10}}
         class Reply:
             def model_dump(self, **kwargs):
                 return payload
@@ -79,7 +82,11 @@ class HTTPTests(unittest.TestCase):
     def test_upstream_error_does_not_break_conversation(self):
         _, session = self.post('session', {})
         with self.assertLogs(level='ERROR'):
-            self.assertEqual(self.post('message', {**session, 'message': 'fail'})[0], 502)
+            status, failed = self.post('message', {**session, 'message': 'fail'})
+            self.assertEqual(status, 502)
+            self.assertEqual(failed['trace']['run_id'], 'failed-run')
+        _, saved = self.post('resume', session)
+        self.assertEqual(saved['messages'][-1]['trace'], failed['trace'])
         self.assertEqual(self.post('message', {**session, 'message': 'hello'})[0], 200)
 
     def test_frontend_and_health_are_served(self):
@@ -87,6 +94,7 @@ class HTTPTests(unittest.TestCase):
             with urlopen(self.base + path) as response:
                 self.assertEqual(response.status, 200)
                 self.assertTrue(response.read())
+                self.assertEqual(response.headers.get('Cache-Control'), 'no-store')
 
 
 class LifecycleTests(unittest.IsolatedAsyncioTestCase):
@@ -108,6 +116,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, 200)
         self.assertEqual(saved['mode'], 'puzzle')
         self.assertEqual([m['role'] for m in saved['messages']], ['user', 'assistant'])
+        self.assertEqual(saved['messages'][-1]['trace']['run_id'], 'success-run')
 
     async def test_browser_disconnect_discards_history_after_grace(self):
         await self.bridge.connection(self.token, 1)

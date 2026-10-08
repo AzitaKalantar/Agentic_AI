@@ -78,7 +78,23 @@ class Bridge:
             message = data.get('message')
             if not isinstance(message, str) or not message.strip() or len(message) > 4000:
                 return 400, {'error': 'Enter a message between 1 and 4,000 characters.'}
-            response = await self.sessions[token].send_message(message)
+            manager = self.sessions[token]
+            try:
+                response = await manager.send_message(message)
+            except Exception:
+                logging.exception('Entertainment request failed')
+                payload = {
+                    'error': 'The activity could not finish. Please try again.',
+                    'message': 'The activity could not finish. Please try again.',
+                    'mode': manager.mode, 'action': 'chat',
+                    'trace': getattr(manager, 'last_trace', None),
+                }
+                if token in self.messages:
+                    self.messages[token].extend([
+                        {'role': 'user', 'message': message},
+                        {**payload, 'role': 'assistant'},
+                    ])
+                return 502, payload
             payload = response.model_dump(mode='json')
             if token in self.messages:
                 self.messages[token].extend([{'role': 'user', 'message': message}, {**payload, 'role': 'assistant'}])
@@ -95,6 +111,12 @@ class Bridge:
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT / 'public'), **kwargs)
+
+    def end_headers(self):
+        # This development UI changes without a build; always fetch fresh files.
+        if not urlparse(self.path).path.startswith('/api/'):
+            self.send_header('Cache-Control', 'no-store')
+        super().end_headers()
 
     def json_response(self, status, data):
         body = json.dumps(data).encode()

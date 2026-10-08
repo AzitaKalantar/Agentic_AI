@@ -11,8 +11,10 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 
 if __package__:
+    from .run_tracing import tool_error
     from .session_storage import DB_PATH, task_session_id
 else:
+    from run_tracing import tool_error
     from session_storage import DB_PATH, task_session_id
 
 
@@ -33,7 +35,7 @@ class ImageSearchContext:
     images: dict[int, dict[str, str]] = field(default_factory=dict)
 
 
-@function_tool
+@function_tool(failure_error_function=tool_error)
 async def search_cute_images(
     context: RunContextWrapper[ImageSearchContext], query: str
 ) -> list[dict[str, str | int]]:
@@ -104,7 +106,7 @@ def create_cute_image_agent() -> Agent[ImageSearchContext]:
 
 
 async def CuteImage(
-    user_id: str = "user-1", subject: str = "cute image", *, session: SQLiteSession | None = None
+    user_id: str = "user-1", subject: str = "cute image", *, session: SQLiteSession | None = None, hooks=None
 ) -> ImageResult | None:
     """Return image details without displaying them; remember the user's selection."""
     if not isinstance(user_id, str) or not user_id.strip():
@@ -122,7 +124,7 @@ async def CuteImage(
         result = await Runner.run(
             create_cute_image_agent(),
             f"Find a cute image of: {subject.strip()}",
-            context=context, session=session,
+            context=context, session=session, hooks=hooks,
         )
         choice = result.final_output
         if choice.image_id is None:

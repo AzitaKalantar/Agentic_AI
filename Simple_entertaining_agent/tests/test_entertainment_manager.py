@@ -3,7 +3,7 @@ import asyncio
 import json
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 from Simple_entertaining_agent import entertainment_manager as module
 from Simple_entertaining_agent.cute_image_agent import ImageResult
@@ -84,11 +84,11 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(module, 'CuteImage', AsyncMock(side_effect=[image, None])) as search:
             response = await self.manager.send_message('kitten')
             self.assertEqual(response.model_dump(mode='json')['image']['title'], 'Kitten')
-            search.assert_awaited_with(user_id='alice', subject='kitten')
+            search.assert_awaited_with(user_id='alice', subject='kitten', hooks=ANY)
             missing_image_reply = await self.manager.send_message('image')
             self.assertIsNone(missing_image_reply.image)
             self.assertIn('No suitable image', missing_image_reply.message)
-            search.assert_awaited_with(user_id='alice', subject='cute baby animal')
+            search.assert_awaited_with(user_id='alice', subject='cute baby animal', hooks=ANY)
 
     async def test_failed_puzzle_start_closes_session_and_does_not_commit_mode(self):
         module.Runner.run.side_effect = [routing_result('puzzle'), RuntimeError('offline')]
@@ -185,7 +185,7 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
 
         conversation = module.Runner.run.call_args.args[1]
         self.assertEqual(conversation[0], {'role': 'user', 'content': 'hello'})
-        self.assertEqual(json.loads(conversation[1]['content']), first_reply.model_dump())
+        self.assertEqual(json.loads(conversation[1]['content']), first_reply.model_dump(exclude={'trace'}))
         self.assertEqual(conversation[2]['content'], 'what can you do?')
         module.SQLiteSession.assert_not_called()
 
@@ -202,6 +202,24 @@ class ManagerTests(unittest.IsolatedAsyncioTestCase):
         module.SQLiteSession.return_value.close.assert_called_once()
         self.assertEqual(manager._history, [])
         self.assertEqual(manager._sessions, {})
+
+    async def test_reply_contains_final_trace_without_adding_it_to_model_history(self):
+        module.Runner.run.side_effect = [routing_result('chat'), routing_result('chat')]
+        reply = await self.manager.send_message('hello')
+        self.assertEqual(reply.trace['routing_decision'], 'chat')
+        self.assertIn('latency_ms', reply.trace)
+        self.assertEqual(reply.trace, self.manager.last_trace)
+        await self.manager.send_message('hello again')
+        saved = json.loads(module.Runner.run.call_args.args[1][1]['content'])
+        self.assertNotIn('trace', saved)
+
+    async def test_failed_turn_exposes_finalized_trace_for_ui(self):
+        module.Runner.run.side_effect = [routing_result('joke'), RuntimeError('offline')]
+        with self.assertRaises(RuntimeError):
+            await self.manager.send_message('joke')
+        self.assertEqual(self.manager.last_trace['status'], 'error')
+        self.assertEqual(self.manager.last_trace['selected_action'], 'joke')
+        self.assertIn('latency_ms', self.manager.last_trace)
 
 
 if __name__ == '__main__':
