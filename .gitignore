@@ -21,3 +21,15 @@ venv/
 # Local agent data
 /Simple_entertaining_agent/db/*
 !/Simple_entertaining_agent/db/.gitkeep
+
+# Private keys and local authentication files
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+.aws/
+
+# Local logs may contain exception details or user content
+*.log
