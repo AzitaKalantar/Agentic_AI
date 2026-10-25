@@ -10,6 +10,7 @@ class SubsectionChunk:
     text: str
     start_char: int
     end_char: int
+    chunk_id: str
 
 
 def chunk_chapter(chapter: Chapter) -> list[SubsectionChunk]:
@@ -33,7 +34,8 @@ def chunk_chapter(chapter: Chapter) -> list[SubsectionChunk]:
     chunks = []
     for left, right in zip(offsets, offsets[1:] + [end]):
         if right > left:
-            chunks.append(SubsectionChunk(boundaries[left], chapter.text[left-start:right-start], left, right))
+            chunks.append(SubsectionChunk(boundaries[left], chapter.text[left-start:right-start], left, right,
+                                          f"chapter-{chapter.number}-chunk-{len(chunks) + 1}"))
     if "".join(chunk.text for chunk in chunks) != chapter.text:
         raise ValueError("Chapter offsets do not match extracted text.")
     return chunks

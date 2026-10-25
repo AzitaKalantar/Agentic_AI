@@ -29,23 +29,29 @@ and the buffer loop live in lessons/planner.py; instructions are in
 lessons/prompts.py and Pydantic schemas in models.py.
 
 Each call receives buffer + next subsection, previous lesson titles/concepts,
-and an end-of-chapter flag. It may produce zero, one, or multiple 10-20 minute
+and an end-of-chapter flag. It may produce zero, one, or multiple approximately 10-minute
 lesson drafts, targeting about 10 minutes and 1-3 concepts. Source excerpts
 must reproduce the input exactly and in order, with unused text as a suffix.
 Invalid LLM source coverage is retried twice, then rejected. No textbook text
 is included in SDK traces. Material is sent to the configured OpenAI model.
 
-Plans now use ChapterPlan with a lessons list of LessonPlan objects. Lesson
-numbers start at 1 within each chapter. source_start is inclusive and source_end
-is exclusive, in Unicode characters relative to the extracted chapter text.
-Recover source with chapter.text[lesson.source_start:lesson.source_end].
-Offsets and numbering are computed in Python, not guessed by the LLM.
-previous_knowledge lists model-selected prerequisites from earlier lessons.
+Plans use ChapterLessonPlan with chapter_title and a lessons list. Each
+LessonPlan contains lesson_number, title, learning_objective, concepts,
+source_chunks, source_scope, estimated_minutes, and depends_on. Numbers start
+at 1 per chapter; dependencies refer only to earlier lessons.
 
-The lessons JSON contains exactly the ChapterPlan fields. Buffer, source
+The buffer loop remains incremental. Python derives source_chunks from exact
+validated source passages, including passages crossing subsection boundaries.
+The data/<book>.chapter-<index>.sources.json catalog stores original chunk text
+and exact per-lesson ranges. Chunk offsets are document-relative; lesson range
+offsets are relative to their chunk, start inclusive/end exclusive. Retrieve
+text with chunk.text[start_char:end_char]. source_scope is the model's concise
+description; source ranges provide the precise retrieval boundaries.
+
+The lessons JSON contains exactly the ChapterLessonPlan fields. Buffer, source
 metadata, status, and completed draft checkpoints are stored separately in
 data/<book>.chapter-<index>.lessons.progress.json. plan_chapter returns a
-ChapterPlan model.
+ChapterLessonPlan model.
 
 Progress is checkpointed after each successful chunk. A final tail is saved as
 remaining_material with status needs_review; it is never silently discarded or

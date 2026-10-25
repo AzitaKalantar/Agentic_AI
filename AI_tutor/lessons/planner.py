@@ -1,5 +1,6 @@
 """Plan one chapter: python -m AI_tutor.lessons.planner book.pdf --chapter 1."""
 import argparse
+from dataclasses import asdict
 import asyncio
 import json
 import os
@@ -8,7 +9,7 @@ from typing import Awaitable, Callable
 
 from dotenv import load_dotenv
 
-from ..models import LessonDraft, PlannerResult, LessonPlan, ChapterPlan
+from ..models import LessonDraft, PlannerResult, LessonPlan, ChapterLessonPlan
 from ..pdf.chapter_parser import parse_chapter
 from ..pdf.chunker import chunk_chapter
 from .prompts import PLANNER_PROMPT
@@ -22,12 +23,11 @@ def validate_source_coverage(material: str, result: PlannerResult) -> None:
         raise ValueError("Planner must preserve source text exactly, in order, without loss or duplication.")
 
 
-def validate_previous_knowledge(previous_lessons, result):
-    known = {concept for lesson in previous_lessons for concept in lesson.concepts}
-    for lesson in result.completed_lessons:
-        if not set(lesson.previous_knowledge) <= known:
-            raise ValueError("previous_knowledge must only reference concepts from earlier lessons.")
-        known.update(lesson.concepts)
+def validate_dependencies(previous_lessons, result):
+    for number, lesson in enumerate(result.completed_lessons, len(previous_lessons) + 1):
+        if len(set(lesson.depends_on)) != len(lesson.depends_on) or any(
+                dependency < 1 or dependency >= number for dependency in lesson.depends_on):
+            raise ValueError("depends_on must contain distinct earlier lesson numbers.")
 
 
 def make_lesson_planner(model=None, *, max_material_characters=60_000):
@@ -44,8 +44,10 @@ def make_lesson_planner(model=None, *, max_material_characters=60_000):
             raise ValueError("Subsection plus buffer exceeds the configured material limit. Use a larger-context configuration or review subsection boundaries.")
         payload = {
             "material": material, "end_of_chapter": end_of_chapter,
-            "previous_lessons": [{"title": lesson.title, "concepts": lesson.concepts}
-                                 for lesson in previous_lessons],
+            "previous_lessons": [{"lesson_number": number, "title": lesson.title,
+                                  "learning_objective": lesson.learning_objective,
+                                  "concepts": lesson.concepts}
+                                 for number, lesson in enumerate(previous_lessons, 1)],
         }
         error = None
         for _ in range(3):
@@ -57,7 +59,7 @@ def make_lesson_planner(model=None, *, max_material_characters=60_000):
             try:
                 result = PlannerResult.model_validate(response.final_output)
                 validate_source_coverage(material, result)
-                validate_previous_knowledge(previous_lessons, result)
+                validate_dependencies(previous_lessons, result)
                 return result
             except ValueError as exc:
                 error = str(exc)
@@ -75,7 +77,7 @@ def _save(path, payload):
 
 async def plan_chapter(pdf_path, chapter: int | str, *, model=None, password=None,
                        create_lesson_plans: Callable[..., Awaitable[PlannerResult]] | None = None):
-    """Return/save ChapterPlan; keep buffer/checkpoints in a .progress.json file.
+    """Return/save ChapterLessonPlan; keep buffer/checkpoints in a .progress.json file.
 
     An injected async callback supports offline testing. Re-running starts a fresh
     plan and replaces this chapter's JSON. No cross-chapter buffering is done.
@@ -85,9 +87,16 @@ async def plan_chapter(pdf_path, chapter: int | str, *, model=None, password=Non
     planner = create_lesson_plans or make_lesson_planner(model)
     target = DATA_DIR / f"{Path(pdf_path).stem}.chapter-{selected.number}.lessons.json"
     progress_target = target.with_suffix(".progress.json")
-    plan = ChapterPlan(chapter_number=selected.number, chapter_title=selected.title, lessons=[])
+    plan = ChapterLessonPlan(chapter_title=selected.title, lessons=[])
     lessons: list[LessonDraft] = []
     source_offset = 0
+    lesson_sources = []
+    chapter_start = selected.outline["start_char"]
+    sources_target = target.with_name(target.name.replace(".lessons.json", ".sources.json"))
+    catalog = {"source_pdf": selected.source_pdf, "chapter_number": selected.number,
+               "chapter_title": selected.title, "chunks": [asdict(chunk) for chunk in chunks],
+               "lesson_sources": lesson_sources}
+    _save(sources_target, catalog)
     buffer = ""
     payload = {"source_pdf": selected.source_pdf, "chapter_number": selected.number,
                "chapter_title": selected.title, "completed_lessons": [],
@@ -100,20 +109,31 @@ async def plan_chapter(pdf_path, chapter: int | str, *, model=None, password=Non
             result = PlannerResult.model_validate(await planner(
                 material, previous_lessons=lessons, end_of_chapter=index == len(chunks) - 1))
             validate_source_coverage(material, result)
-            validate_previous_knowledge(lessons, result)
+            validate_dependencies(lessons, result)
             for draft in result.completed_lessons:
                 end = source_offset + len(draft.source_text)
+                ranges = []
+                for source_chunk in chunks:
+                    left = max(chapter_start + source_offset, source_chunk.start_char)
+                    right = min(chapter_start + end, source_chunk.end_char)
+                    if left < right:
+                        ranges.append({"chunk_id": source_chunk.chunk_id,
+                                       "start_char": left - source_chunk.start_char,
+                                       "end_char": right - source_chunk.start_char})
                 plan.lessons.append(LessonPlan(
                     lesson_number=len(plan.lessons) + 1, title=draft.title,
-                    concepts=draft.concepts, source_start=source_offset, source_end=end,
-                    estimated_minutes=draft.estimated_minutes,
-                    previous_knowledge=draft.previous_knowledge))
+                    learning_objective=draft.learning_objective, concepts=draft.concepts,
+                    source_chunks=[item["chunk_id"] for item in ranges],
+                    source_scope=draft.source_scope, estimated_minutes=draft.estimated_minutes,
+                    depends_on=draft.depends_on))
+                lesson_sources.append({"lesson_number": len(plan.lessons), "ranges": ranges})
                 source_offset = end
             lessons.extend(result.completed_lessons)
             buffer = result.remaining_material
             payload.update(completed_lessons=[lesson.model_dump() for lesson in lessons],
                            remaining_material=buffer, processed_chunks=index + 1)
             _save(progress_target, payload)
+            _save(sources_target, catalog)
     except Exception:
         payload["status"] = "failed"
         _save(progress_target, payload)

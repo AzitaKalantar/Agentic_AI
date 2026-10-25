@@ -6,13 +6,14 @@ from unittest.mock import patch, AsyncMock
 
 import pymupdf
 
-from AI_tutor.models import LessonDraft, PlannerResult, ChapterPlan
+from AI_tutor.models import LessonDraft, PlannerResult, ChapterLessonPlan
 from AI_tutor.pdf.chapter_parser import Chapter, parse_chapter
 from AI_tutor.lessons import planner
 
 
 def lesson(text):
-    return LessonDraft(title="Topic", concepts=["Concept"], source_text=text, estimated_minutes=10)
+    return LessonDraft(title="Topic", concepts=["Concept"], source_text=text, estimated_minutes=10,
+                       learning_objective="Understand the concept", source_scope="Assigned passage", depends_on=[])
 
 
 class PlannerTests(unittest.IsolatedAsyncioTestCase):
@@ -26,13 +27,18 @@ class PlannerTests(unittest.IsolatedAsyncioTestCase):
             result = await planner.plan_chapter("book.pdf", 1, create_lesson_plans=callback)
             self.assertEqual(callback.call_args_list[1].args[0], "abcdefghij")
             self.assertTrue(callback.call_args_list[1].kwargs["end_of_chapter"])
-            self.assertIsInstance(result, ChapterPlan)
+            self.assertIsInstance(result, ChapterLessonPlan)
             self.assertEqual(len(result.lessons), 2)
             saved = json.loads((Path(directory) / "book.chapter-1.lessons.json").read_text())
             self.assertEqual(saved, result.model_dump())
-            self.assertEqual([(item.source_start, item.source_end) for item in result.lessons], [(0, 4), (4, 10)])
+            sources = json.loads((Path(directory) / "book.chapter-1.sources.json").read_text())
+            by_id = {chunk["chunk_id"]: chunk["text"] for chunk in sources["chunks"]}
+            recovered = ["".join(by_id[item["chunk_id"]][item["start_char"]:item["end_char"]]
+                                 for item in entry["ranges"]) for entry in sources["lesson_sources"]]
+            self.assertEqual(recovered, ["abcd", "efghij"])
+            self.assertEqual(result.lessons[0].source_chunks, ["chapter-1-chunk-1", "chapter-1-chunk-2"])
             self.assertEqual([item.lesson_number for item in result.lessons], [1, 2])
-            self.assertEqual([chapter.text[item.source_start:item.source_end] for item in result.lessons], ["abcd", "efghij"])
+
 
     async def test_tail_is_saved_for_review(self):
         chapter = Chapter(1, "Chapter", "abc", {"start_char": 0, "end_char": 3, "sections": []}, "book.pdf")
@@ -82,10 +88,26 @@ class PlannerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(run.await_count, 2)
             self.assertEqual(result.remaining_material, "")
 
-    def test_prerequisites_only_reference_earlier_concepts(self):
+    def test_dependencies_only_reference_earlier_lessons(self):
         first = lesson("abc")
         second = lesson("def")
-        second.previous_knowledge = ["Concept"]
-        planner.validate_previous_knowledge([], PlannerResult(completed_lessons=[first, second], remaining_material=""))
-        with self.assertRaisesRegex(ValueError, "earlier lessons"):
-            planner.validate_previous_knowledge([], PlannerResult(completed_lessons=[second], remaining_material=""))
+        second.depends_on = [1]
+        planner.validate_dependencies([], PlannerResult(completed_lessons=[first, second], remaining_material=""))
+        with self.assertRaisesRegex(ValueError, "earlier lesson"):
+            planner.validate_dependencies([], PlannerResult(completed_lessons=[second], remaining_material=""))
+
+    async def test_source_ranges_account_for_nonzero_chapter_offset(self):
+        chapter = Chapter(2, "Chapter Two", "abcdef", {"start_char": 100, "end_char": 106,
+            "sections": [{"title": "Second", "start_char": 103, "sections": []}]}, "book.pdf")
+        second = lesson("cdef")
+        second.depends_on = [1]
+        callback = AsyncMock(side_effect=[
+            PlannerResult(completed_lessons=[lesson("ab")], remaining_material="c"),
+            PlannerResult(completed_lessons=[second], remaining_material="")])
+        with tempfile.TemporaryDirectory() as directory, patch.object(planner, "DATA_DIR", Path(directory)), patch.object(planner, "parse_chapter", return_value=chapter):
+            result = await planner.plan_chapter("book.pdf", 2, create_lesson_plans=callback)
+            sources = json.loads((Path(directory) / "book.chapter-2.sources.json").read_text())
+            self.assertEqual(sources["lesson_sources"][1]["ranges"], [
+                {"chunk_id": "chapter-2-chunk-1", "start_char": 2, "end_char": 3},
+                {"chunk_id": "chapter-2-chunk-2", "start_char": 0, "end_char": 3}])
+            self.assertEqual(result.lessons[1].depends_on, [1])
