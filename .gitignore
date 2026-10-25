@@ -21,6 +21,7 @@ venv/
 # Local agent data
 /Simple_entertaining_agent/db/*
 !/Simple_entertaining_agent/db/.gitkeep
+*/data/*
 
 # Private keys and local authentication files
 *.pem
